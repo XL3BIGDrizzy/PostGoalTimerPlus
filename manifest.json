@@ -1,8 +1,8 @@
 {
-  "name": "NoGoalTimer",
-  "version_number": "1.0.1",
-  "website_url": "https://github.com/XL3BIGDrizzy/NoGoalTimer",
-  "description": "Removes the post-score countdown timer in Super Battle Golf so rounds wait until the remaining players finish.",
+  "name": "PostGoalTimerPlus",
+  "version_number": "1.1.0",
+  "website_url": "https://github.com/XL3BIGDrizzy/PostGoalTimerPlus",
+  "description": "Lets you disable the post-score countdown or extend it up to 5 minutes in Super Battle Golf.",
   "dependencies": [
     "BepInEx-BepInExPack-5.4.2100"
   ]
