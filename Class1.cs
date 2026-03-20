@@ -1,56 +1,86 @@
 ﻿using BepInEx;
+using BepInEx.Configuration;
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
 
-namespace NoGoalTimer
+namespace PostGoalTimerPlus
 {
-	[BepInPlugin("superbattlegolf.nogoaltimer", "No Goal Timer", "1.0.0")]
-	public class NoGoalTimerPlugin : BaseUnityPlugin
+	[BepInPlugin("superbattlegolf.postgoaltimerplus", "PostGoalTimerPlus", "1.1.0")]
+	public class PostGoalTimerPlusPlugin : BaseUnityPlugin
 	{
+		private const int DisabledCountdownSeconds = 0;
+
+		private enum CountdownOption
+		{
+			Disabled = 0,
+			OneMinute = 60,
+			TwoMinutes = 120,
+			ThreeMinutes = 180,
+			FourMinutes = 240,
+			FiveMinutes = 300
+		}
+
 		private Harmony _harmony;
+		private static ConfigEntry<CountdownOption> _countdownOption;
 
 		private void Awake()
 		{
-			_harmony = new Harmony("superbattlegolf.nogoaltimer");
+			_countdownOption = Config.Bind(
+				"General",
+				"CountdownOption",
+				CountdownOption.Disabled,
+				"Post-score countdown behavior. Options: Disabled, OneMinute, TwoMinutes, ThreeMinutes, FourMinutes, FiveMinutes.");
+
+			_harmony = new Harmony("superbattlegolf.postgoaltimerplus");
 			TryApplyPatch();
 		}
 
 		private void TryApplyPatch()
 		{
-			var fallbackTargets = new List<(string TypeName, string MethodName)>
+			var patchTargets = new List<(string TypeName, string MethodName, string PatchMethodName, string Description)>
 			{
-				("CourseManager", "BeginCountdownToMatchEnd"),
-				("CourseManager", "CountDownToMatchEndRoutine")
+				("CourseManager", "BeginCountdownToMatchEnd", nameof(BeginCountdownPrefix), "countdown start gate"),
+				("CourseManager", "InformPlayerScoredInternal", nameof(InformPlayerScoredPostfix), "countdown duration override")
 			};
 
-			foreach (var fallback in fallbackTargets)
+			foreach (var patchTarget in patchTargets)
 			{
-				var targetMethod = FindTargetMethod(fallback.TypeName, fallback.MethodName);
+				var targetMethod = FindTargetMethod(patchTarget.TypeName, patchTarget.MethodName);
 				if (targetMethod == null)
 				{
 					continue;
 				}
 
-				ApplyPrefixPatch(targetMethod, $"target {fallback.TypeName}.{fallback.MethodName}");
-				return;
+				ApplyPatch(targetMethod, patchTarget.PatchMethodName, patchTarget.Description);
 			}
-
-			Logger.LogError(
-				"Patch target not found. This game build may have changed the CourseManager countdown method names.");
 		}
 
-		private void ApplyPrefixPatch(MethodInfo targetMethod, string source)
+		private void ApplyPatch(MethodInfo targetMethod, string patchMethodName, string description)
 		{
 			if (targetMethod == null)
 			{
 				return;
 			}
 
-			var prefix = new HarmonyMethod(AccessTools.Method(typeof(NoGoalTimerPlugin), nameof(BlockCountdownPrefix)));
-			_harmony.Patch(targetMethod, prefix: prefix);
-			Logger.LogInfo($"Patched {targetMethod.DeclaringType?.FullName}.{targetMethod.Name} using {source}. Post-goal timer is disabled.");
+			var patchMethod = AccessTools.Method(typeof(PostGoalTimerPlusPlugin), patchMethodName);
+			if (patchMethod == null)
+			{
+				Logger.LogError($"Patch method '{patchMethodName}' was not found in PostGoalTimerPlusPlugin.");
+				return;
+			}
+
+			if (patchMethod.ReturnType == typeof(bool))
+			{
+				_harmony.Patch(targetMethod, prefix: new HarmonyMethod(patchMethod));
+			}
+			else
+			{
+				_harmony.Patch(targetMethod, postfix: new HarmonyMethod(patchMethod));
+			}
+
+			Logger.LogInfo($"Patched {targetMethod.DeclaringType?.FullName}.{targetMethod.Name} for {description}.");
 		}
 
 		private static MethodInfo FindTargetMethod(string typeName, string methodName)
@@ -91,9 +121,45 @@ namespace NoGoalTimer
 			return null;
 		}
 
-		private static bool BlockCountdownPrefix()
+		private static bool BeginCountdownPrefix()
 		{
-			return false;
+			return GetConfiguredCountdownSeconds() > DisabledCountdownSeconds;
 		}
+
+		private static void InformPlayerScoredPostfix(object __instance)
+		{
+			var countdownSeconds = GetConfiguredCountdownSeconds();
+			if (countdownSeconds <= DisabledCountdownSeconds || __instance == null)
+			{
+				return;
+			}
+
+			var instanceType = __instance.GetType();
+			var matchStateField = AccessTools.Field(instanceType, "matchState");
+			var countdownField = AccessTools.Field(instanceType, "countdownRemainingTime");
+			if (matchStateField == null || countdownField == null)
+			{
+				return;
+			}
+
+			var matchState = matchStateField.GetValue(__instance);
+			if (!string.Equals(matchState?.ToString(), "CountingDownToEnd", StringComparison.Ordinal))
+			{
+				return;
+			}
+
+			countdownField.SetValue(__instance, (float)countdownSeconds);
+		}
+
+		private static int GetConfiguredCountdownSeconds()
+		{
+			if (_countdownOption == null)
+			{
+				return DisabledCountdownSeconds;
+			}
+
+			return (int)_countdownOption.Value;
+		}
+
 	}
 }
